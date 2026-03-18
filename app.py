@@ -25,16 +25,46 @@ from extractors import extract_task_intent, extract_session_input
 from session_manager import create_session, update_session_credentials, evaluate_session_readiness, update_session_mode, set_required_fields, get_missing_field_names
 from result_handler import handle_execution_result
 
-# Environment Variables
+# Environment Variables with graceful failure handling
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 TINYFISH_API_KEY = os.getenv('TINYFISH_API_KEY')
+ENCRYPTION_KEY_ENV = os.getenv('ENCRYPTION_KEY')
+
+# Validate required environment variables
+if not GEMINI_API_KEY:
+    print("[STARTUP ERROR] GEMINI_API_KEY environment variable is not set")
+    print("[STARTUP ERROR] Please set GEMINI_API_KEY in your deployment environment")
+    raise ValueError("GEMINI_API_KEY is required")
+
+if not TINYFISH_API_KEY:
+    print("[STARTUP ERROR] TINYFISH_API_KEY environment variable is not set")
+    print("[STARTUP ERROR] Please set TINYFISH_API_KEY in your deployment environment")
+    raise ValueError("TINYFISH_API_KEY is required")
+
+if not ENCRYPTION_KEY_ENV:
+    print("[STARTUP ERROR] ENCRYPTION_KEY environment variable is not set")
+    print("[STARTUP ERROR] Please set ENCRYPTION_KEY in your deployment environment")
+    print("[STARTUP ERROR] Generate one with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'")
+    raise ValueError("ENCRYPTION_KEY is required")
+
+print("[Startup] Environment variables loaded successfully")
 
 # Configure Gemini
-client = genai.Client(api_key=GEMINI_API_KEY)
+try:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    print("[Startup] Gemini client initialized")
+except Exception as e:
+    print(f"[STARTUP ERROR] Failed to initialize Gemini client: {e}")
+    raise
 
-# Encryption key for credentials (in production, store this securely)
-ENCRYPTION_KEY = Fernet.generate_key()
-cipher = Fernet(ENCRYPTION_KEY)
+# Encryption key for credentials
+try:
+    cipher = Fernet(ENCRYPTION_KEY_ENV.encode() if isinstance(ENCRYPTION_KEY_ENV, str) else ENCRYPTION_KEY_ENV)
+    print("[Startup] Encryption cipher initialized")
+except Exception as e:
+    print(f"[STARTUP ERROR] Failed to initialize encryption cipher: {e}")
+    print(f"[STARTUP ERROR] ENCRYPTION_KEY must be a valid Fernet key")
+    raise
 
 app = Flask(__name__)
 CORS(app)
@@ -67,19 +97,26 @@ sessions = {}  # session_id -> {
 DB_PATH = os.path.join(os.path.dirname(__file__), 'navi.db')
 
 # Initialize database and load saved nodes on startup
-init_db()
-saved_nodes = load_saved_nodes()
-
-# Log credential status on startup
-if saved_nodes:
-    nodes_with_creds = 0
-    for node_id, node_data in saved_nodes.items():
-        creds = node_data.get('credentials', {})
-        if creds and len([k for k, v in creds.items() if v]) > 0:
-            nodes_with_creds += 1
-    print(f"[Startup] Nodes with usable credentials: {nodes_with_creds}/{len(saved_nodes)}")
-else:
-    print("[Startup] No saved nodes found")
+try:
+    init_db()
+    print("[Startup] Database initialized")
+    saved_nodes = load_saved_nodes()
+    print(f"[Startup] Loaded {len(saved_nodes)} saved nodes")
+    
+    # Log credential status on startup
+    if saved_nodes:
+        nodes_with_creds = 0
+        for node_id, node_data in saved_nodes.items():
+            creds = node_data.get('credentials', {})
+            if creds and len([k for k, v in creds.items() if v]) > 0:
+                nodes_with_creds += 1
+        print(f"[Startup] Nodes with usable credentials: {nodes_with_creds}/{len(saved_nodes)}")
+    else:
+        print("[Startup] No saved nodes found")
+except Exception as e:
+    print(f"[STARTUP ERROR] Database initialization failed: {e}")
+    print(f"[STARTUP ERROR] This is non-fatal - starting with empty state")
+    saved_nodes = {}
 
 # ===== HELPER FUNCTIONS =====
 
