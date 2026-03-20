@@ -2434,9 +2434,10 @@ def nodes_endpoint():
                 'credentials': encrypted_creds
             }
             
-            # Save to database
-            from db_helpers import save_node
-            save_node(portal_id, saved_nodes[portal_id])
+            # Persist to database
+            print("[Add Portal] Persisting node to database...")
+            persist_node(portal_id, saved_nodes[portal_id])
+            print("[Add Portal] Node persisted successfully")
             
             # Create edge from navi_agent to this portal (auto-connect)
             edge_id = f"edge-navi_agent-{portal_id}"
