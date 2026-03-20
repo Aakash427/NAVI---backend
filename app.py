@@ -18,12 +18,17 @@ import threading
 
 load_dotenv()
 
+print("[Startup] Starting Navi backend...")
+print("[Startup] Loading modules...")
+
 from db_helpers import init_db, load_saved_nodes, persist_node, persist_session, reset_all_state
 from utils import normalize_fields, mask_credentials, log_session_event, normalize_portal_key, get_portal_aliases, portals_match, build_execution_goal_comprehensive, build_discovery_goal
 from router import route_message
 from extractors import extract_task_intent, extract_session_input
 from session_manager import create_session, update_session_credentials, evaluate_session_readiness, update_session_mode, set_required_fields, get_missing_field_names
 from result_handler import handle_execution_result
+
+print("[Startup] All modules loaded successfully")
 
 # Environment Variables with graceful failure handling
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
@@ -66,8 +71,11 @@ except Exception as e:
     print(f"[STARTUP ERROR] ENCRYPTION_KEY must be a valid Fernet key")
     raise
 
+print("[Startup] Creating Flask app...")
 app = Flask(__name__)
+print("[Startup] Configuring CORS...")
 CORS(app)
+print("[Startup] Flask app created successfully")
 
 # In-Memory State
 saved_nodes = {}  # portal_id -> { "type": "browser" | "api", "portal_name": str, "portal_url": str, "credentials": {}, "api_key": str }
@@ -98,9 +106,11 @@ sessions = {}  # session_id -> {
 DB_PATH = os.path.join(os.path.dirname(__file__), 'navi.db')
 
 # Initialize database and load saved nodes on startup
+print("[Startup] Initializing database...")
 try:
     init_db()
     print("[Startup] Database initialized")
+    print("[Startup] Loading saved nodes...")
     saved_nodes = load_saved_nodes()
     print(f"[Startup] Loaded {len(saved_nodes)} saved nodes")
     
@@ -2613,8 +2623,12 @@ def health_check():
     """Simple health check endpoint for deployment platforms"""
     return jsonify({'ok': True}), 200
 
+print("[Startup] All routes registered successfully")
+print("[Startup] Backend initialization complete - ready for requests")
+
 if __name__ == '__main__':
     # Read port from environment for deployment compatibility
     port = int(os.environ.get('PORT', 5000))
+    print(f"[Startup] Running in __main__ mode on port {port}")
     # Bind to 0.0.0.0 to allow external connections (required for Render/Railway)
     app.run(host='0.0.0.0', debug=True, port=port)
