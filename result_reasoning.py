@@ -32,7 +32,7 @@ def reason_over_previous_result(user_message, session, client):
         client: Gemini client
         
     Returns:
-        str: Natural language answer based on stored data
+        dict: {"answer": str, "needs_refresh": bool}
     """
     print(f"[Reasoning] Gemini answering follow-up question")
     
@@ -42,10 +42,23 @@ def reason_over_previous_result(user_message, session, client):
     previous_summary = session.get('last_result_summary')
     portal_name = session.get('portal_name', 'the portal')
     original_task = session.get('original_task', 'your request')
+    last_run_at = session.get('last_tool_run_at')
     
     if not normalized_result:
-        print(f"[Reasoning] No stored result found")
-        return "I don't have any previous results to reference. Could you ask me to fetch some data first?"
+        print(f"[Reasoning] No stored result found - needs refresh")
+        return {"answer": None, "needs_refresh": True}
+    
+    # Check if data is stale (older than 30 minutes)
+    needs_refresh = False
+    if last_run_at:
+        try:
+            last_run_time = datetime.fromisoformat(last_run_at)
+            elapsed = datetime.now() - last_run_time
+            if elapsed > timedelta(minutes=30):
+                print(f"[Reasoning] Data is stale ({elapsed.total_seconds()/60:.1f} minutes old)")
+                needs_refresh = True
+        except:
+            pass
     
     print(f"[Memory] Using stored result type={result_type}")
     
@@ -118,11 +131,17 @@ Generate your answer now (plain text only):"""
         
         answer = response.text.strip()
         print(f"[Reasoning] Generated answer ({len(answer)} chars)")
-        return answer
+        
+        # Check if Gemini couldn't answer due to missing data
+        if any(phrase in answer.lower() for phrase in ["don't have", "can't", "not available", "missing", "no information"]):
+            print(f"[Reasoning] Answer indicates missing data - suggesting refresh")
+            needs_refresh = True
+        
+        return {"answer": answer, "needs_refresh": needs_refresh}
         
     except Exception as e:
         print(f"[Reasoning] Gemini reasoning failed: {e}")
-        return "I'm having trouble processing your follow-up question. Could you rephrase it or ask me to fetch fresh data?"
+        return {"answer": None, "needs_refresh": True}
 
 
 def should_allow_rerun(user_message: str, session: dict) -> bool:

@@ -73,6 +73,7 @@ CORS(app)
 saved_nodes = {}  # portal_id -> { "type": "browser" | "api", "portal_name": str, "portal_url": str, "credentials": {}, "api_key": str }
 jobs = {}  # job_id -> { "intent": str, "portal_id": str, "instruction": str, "status": "waiting_auth" | "waiting_confirm" | "running" | "done" }
 navi_portals = {}
+edges_storage = {}  # edge_id -> { "source": str, "target": str } - stores navi_agent connections
 
 # Orchestration Sessions (phase-based state machine)
 sessions = {}  # session_id -> {
@@ -1457,7 +1458,7 @@ def api_chat():
                     persist_session(sid, sess)
         
         # ===== STEP 1: ROUTE MESSAGE =====
-        route_result = route_message(user_message, sessions, saved_nodes)
+        route_result = route_message(user_message, sessions, saved_nodes, edges_storage)
         route = route_result['route']
         session_id = route_result.get('session_id')
         matched_node_id = route_result.get('matched_node_id')
@@ -1529,17 +1530,72 @@ def api_chat():
             session = sessions[session_id]
             
             # Use Gemini to reason over stored result
-            response_text = reason_over_previous_result(user_message, session, client)
+            reasoning_result = reason_over_previous_result(user_message, session, client)
+            answer = reasoning_result.get('answer')
+            needs_refresh = reasoning_result.get('needs_refresh', False)
             
-            # If Gemini couldn't answer, provide helpful guidance
-            if not response_text or "don't have" in response_text.lower() or "can't" in response_text.lower():
-                response_text = "I can answer questions about the last result, but I may need you to refresh the data if you want the latest update."
+            # If data is stale or missing, auto-trigger refresh
+            if needs_refresh:
+                print(f"[Follow-up] Data stale/missing - auto-triggering refresh")
+                
+                # Check if we have a matched node to reuse credentials
+                matched_node_id = session.get('matched_node_id')
+                if matched_node_id and matched_node_id in saved_nodes:
+                    node = saved_nodes[matched_node_id]
+                    
+                    # Create new session for refresh
+                    new_session_id = str(uuid.uuid4())
+                    refresh_session = create_session(
+                        new_session_id,
+                        node.get('portal_key'),
+                        node.get('portal_name'),
+                        node.get('portal_url'),
+                        user_message,
+                        node_type=node.get('type', 'browser'),
+                        matched_node_id=matched_node_id
+                    )
+                    
+                    # Reuse saved credentials
+                    saved_creds = node.get('credentials', {}) or {}
+                    update_session_credentials(refresh_session, saved_creds, cipher)
+                    sessions[new_session_id] = refresh_session
+                    
+                    # Check readiness
+                    readiness = evaluate_session_readiness(refresh_session)
+                    
+                    if readiness['is_ready']:
+                        print(f"[SESSION START] Auto-refresh for {node.get('portal_name')}")
+                        update_session_mode(refresh_session, 'ready', 'running')
+                        persist_session(new_session_id, refresh_session)
+                        
+                        # Start TinyFish in background
+                        thread = threading.Thread(
+                            target=execute_tinyfish_session_background,
+                            args=(new_session_id, client)
+                        )
+                        thread.daemon = True
+                        thread.start()
+                        
+                        return jsonify({
+                            'type': 'text',
+                            'message': 'Let me refresh the schedule for you.',
+                            'session_id': new_session_id,
+                            'running': True
+                        }), 200
             
-            return jsonify({
-                'type': 'text',
-                'message': response_text,
-                'session_id': session_id
-            }), 200
+            # Return answer from stored data
+            if answer:
+                return jsonify({
+                    'type': 'text',
+                    'message': answer,
+                    'session_id': session_id
+                }), 200
+            else:
+                return jsonify({
+                    'type': 'text',
+                    'message': 'Let me fetch that information for you.',
+                    'session_id': session_id
+                }), 200
         
         # ===== STEP 3: HANDLE GENERAL CHAT =====
         if route == 'general_chat':
@@ -1556,6 +1612,7 @@ def api_chat():
         if route == 'repeat_run':
             # Load matched node
             node = saved_nodes[matched_node_id]
+            print(f"[PORTAL REUSED] {node.get('portal_name')} (node {matched_node_id[:8]})")
             
             # Extract intent to get any provided credentials
             intent_result = extract_task_intent(user_message, saved_nodes, client)
@@ -1584,11 +1641,13 @@ def api_chat():
             readiness = evaluate_session_readiness(session)
             
             if readiness['is_ready']:
+                print(f"[SESSION START] Repeat run for {node.get('portal_name')} with saved credentials")
                 # Ready to execute
                 update_session_mode(session, 'ready', 'running')
                 persist_session(new_session_id, session)
                 
                 # Start TinyFish execution in background thread
+                print(f"[TINYFISH RUNNING] Session {new_session_id[:8]}")
                 thread = threading.Thread(
                     target=execute_tinyfish_session_background,
                     args=(new_session_id, client)
@@ -1599,7 +1658,7 @@ def api_chat():
                 # Return immediately - frontend will poll for status
                 return jsonify({
                     'type': 'text',
-                    'message': 'Navi is working on your task...',
+                    'message': f'Let me fetch the latest {node.get("portal_name", "data")} for you.',
                     'session_id': new_session_id,
                     'running': True
                 }), 200
@@ -2316,6 +2375,163 @@ def confirm_action():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/nodes', methods=['GET', 'POST'])
+def nodes_endpoint():
+    """Handle both GET (list nodes) and POST (create node) for /api/nodes"""
+    
+    # POST: Create a new portal node manually
+    if request.method == 'POST':
+        try:
+            print("[Add Portal] POST request received")
+            data = request.json
+            portal_name = data.get('portal_name', '')
+            portal_url = data.get('portal_url', '')
+            credentials = data.get('credentials', {})
+            node_type = data.get('node_type', 'browser')
+            
+            if not portal_name or not portal_url:
+                print("[Add Portal] Error: Missing portal_name or portal_url")
+                return jsonify({'error': 'portal_name and portal_url are required'}), 400
+            
+            print(f"[Add Portal] Creating portal: {portal_name}")
+            print(f"[Add Portal] URL: {portal_url}")
+            print(f"[Add Portal] Type: {node_type}")
+            print(f"[Add Portal] Credentials: {list(credentials.keys())}")
+            
+            # Generate unique portal ID
+            portal_id = str(uuid.uuid4())
+            
+            # Compute portal key
+            from utils import normalize_portal_key
+            portal_key = normalize_portal_key(portal_name, portal_url)
+            
+            # Encrypt credentials
+            encrypted_creds = {}
+            for key, value in credentials.items():
+                if value:
+                    try:
+                        encrypted_creds[key] = cipher.encrypt(str(value).encode()).decode()
+                    except Exception as e:
+                        print(f"[Add Portal] Error encrypting {key}: {e}")
+                        encrypted_creds[key] = value
+            
+            # Save node to saved_nodes
+            saved_nodes[portal_id] = {
+                'type': node_type,
+                'portal_name': portal_name,
+                'portal_url': portal_url,
+                'portal_key': portal_key,
+                'credentials': encrypted_creds
+            }
+            
+            # Save to database
+            from db_helpers import save_node
+            save_node(portal_id, saved_nodes[portal_id])
+            
+            # Create edge from navi_agent to this portal (auto-connect)
+            edge_id = f"edge-navi_agent-{portal_id}"
+            edges_storage[edge_id] = {
+                'source': 'navi_agent',
+                'target': portal_id
+            }
+            
+            print(f"[Add Portal] Node created: {portal_id[:8]} for {portal_name}")
+            print(f"[Add Portal] Edge created: navi_agent -> {portal_id[:8]}")
+            
+            return jsonify({
+                'success': True,
+                'node_id': portal_id,
+                'portal_name': portal_name,
+                'message': f'Portal {portal_name} created successfully'
+            }), 200
+            
+        except Exception as e:
+            print(f"[Add Portal] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+    
+    # GET: Return all nodes and edges
+    else:  # request.method == 'GET'
+        try:
+            nodes = []
+            edges = []
+            
+            # Central Navi core node (use navi_agent as ID for connection gating)
+            navi_core = {
+                'id': 'navi_agent',
+                'type': 'naviCore',
+                'position': {'x': 400, 'y': 300},
+                'data': {'label': 'Navi', 'status': 'active'}
+            }
+            nodes.append(navi_core)
+            
+            # Position portal nodes in a circle around Navi core
+            num_portals = len(saved_nodes)
+            radius = 250
+            
+            for idx, (portal_id, node_data) in enumerate(saved_nodes.items()):
+                # Calculate position in circle
+                angle = (2 * math.pi * idx) / max(num_portals, 1)
+                x = 400 + radius * math.cos(angle)
+                y = 300 + radius * math.sin(angle)
+                
+                # Check if node is connected to navi_agent via edges
+                is_connected = False
+                for edge_id, edge_data in edges_storage.items():
+                    if edge_data.get('source') == 'navi_agent' and edge_data.get('target') == portal_id:
+                        is_connected = True
+                        break
+                
+                # Compute node status
+                credentials = node_data.get('credentials', {})
+                has_credentials = credentials and len(credentials) > 0
+                
+                if is_connected and has_credentials:
+                    node_status = 'connected'
+                elif is_connected:
+                    node_status = 'connected_no_creds'
+                else:
+                    node_status = 'not_connected'
+                
+                # Create portal node
+                portal_node = {
+                    'id': portal_id,
+                    'type': 'universalPortal',
+                    'position': {'x': x, 'y': y},
+                    'data': {
+                        'portalName': node_data.get('portal_name'),
+                        'portalUrl': node_data.get('portal_url'),
+                        'portalKey': node_data.get('portal_key'),
+                        'nodeType': node_data.get('type'),
+                        'status': node_status,
+                        'isConnected': is_connected
+                    }
+                }
+                nodes.append(portal_node)
+                
+                # Create edge from Navi core to portal (only if connected)
+                if is_connected:
+                    edge = {
+                        'id': f'edge-navi-{portal_id}',
+                        'source': 'navi_agent',
+                        'target': portal_id,
+                        'animated': True,
+                        'style': {'stroke': '#8b5cf6', 'strokeWidth': 2}
+                    }
+                    edges.append(edge)
+            
+            return jsonify({
+                'nodes': nodes,
+                'edges': edges
+            }), 200
+            
+        except Exception as e:
+            print(f"[Get Nodes] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
+
 @app.route('/api/nodes/<node_id>', methods=['DELETE'])
 def delete_node_endpoint(node_id):
     """Delete a saved node and its credentials"""
@@ -2331,6 +2547,12 @@ def delete_node_endpoint(node_id):
         
         # Remove from in-memory state
         del saved_nodes[node_id]
+        
+        # Remove associated edges
+        edges_to_remove = [edge_id for edge_id, edge_data in edges_storage.items() 
+                          if edge_data['target'] == node_id or edge_data['source'] == node_id]
+        for edge_id in edges_to_remove:
+            del edges_storage[edge_id]
         
         # Remove from database
         from db_helpers import delete_node
@@ -2383,76 +2605,6 @@ def get_session_status(session_id):
         
     except Exception as e:
         print(f"[Session Status] Error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/nodes', methods=['GET'])
-def get_nodes():
-    """Returns Navi core node + all saved portal nodes in circle formation + edges"""
-    try:
-        nodes = []
-        edges = []
-        
-        # Central Navi core node
-        navi_core = {
-            'id': 'navi-core',
-            'type': 'naviCore',
-            'position': {'x': 400, 'y': 300},
-            'data': {'label': 'Navi', 'status': 'active'}
-        }
-        nodes.append(navi_core)
-        
-        # Position portal nodes in a circle around Navi core
-        num_portals = len(saved_nodes)
-        radius = 250
-        
-        for idx, (portal_id, node_data) in enumerate(saved_nodes.items()):
-            # Calculate position in circle
-            angle = (2 * math.pi * idx) / max(num_portals, 1)
-            x = 400 + radius * math.cos(angle)
-            y = 300 + radius * math.sin(angle)
-            
-            # Compute node status
-            credentials = node_data.get('credentials', {})
-            if credentials and len(credentials) > 0:
-                node_status = 'connected'
-            else:
-                node_status = 'needs_credentials'
-            
-            # Create portal node
-            portal_node = {
-                'id': portal_id,
-                'type': 'universalPortal',
-                'position': {'x': x, 'y': y},
-                'data': {
-                    'portalName': node_data.get('portal_name'),
-                    'portalUrl': node_data.get('portal_url'),
-                    'portalKey': node_data.get('portal_key'),
-                    'nodeType': node_data.get('type'),
-                    'status': node_status,
-                    'isConnected': node_status == 'connected'
-                }
-            }
-            nodes.append(portal_node)
-            
-            # Create edge from Navi core to portal
-            edge = {
-                'id': f'edge-navi-{portal_id}',
-                'source': 'navi-core',
-                'target': portal_id,
-                'animated': True,
-                'style': {'stroke': '#8b5cf6', 'strokeWidth': 2}
-            }
-            edges.append(edge)
-        
-        return jsonify({
-            'nodes': nodes,
-            'edges': edges
-        }), 200
-        
-    except Exception as e:
-        print(f"[Get Nodes] Error: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 # Health check endpoint for deployment monitoring

@@ -7,9 +7,15 @@ from utils import normalize_portal_key, portals_match
 from result_reasoning import has_stored_result, should_allow_rerun, is_execution_too_recent, looks_like_followup_question
 
 
-def route_message(user_message, sessions, saved_nodes):
+def route_message(user_message, sessions, saved_nodes, edges_storage=None):
     """
     Route incoming user message to appropriate handler.
+    
+    Args:
+        user_message: User's message
+        sessions: Active sessions dict
+        saved_nodes: All saved portal nodes
+        edges_storage: Edge connections dict (for connection gating)
 
     Returns:
         {
@@ -18,6 +24,21 @@ def route_message(user_message, sessions, saved_nodes):
             "matched_node_id": str | None
         }
     """
+    
+    # Filter saved_nodes to only include nodes connected to navi_agent
+    if edges_storage:
+        connected_node_ids = set()
+        for edge_id, edge_data in edges_storage.items():
+            if edge_data.get('source') == 'navi_agent':
+                connected_node_ids.add(edge_data.get('target'))
+        
+        # Filter saved_nodes to only connected nodes
+        saved_nodes = {node_id: node_data for node_id, node_data in saved_nodes.items() 
+                      if node_id in connected_node_ids}
+        
+        print(f"[Router] Connection gating: {len(connected_node_ids)} connected nodes out of {len(saved_nodes)} total")
+    else:
+        print(f"[Router] No edge storage - using all {len(saved_nodes)} nodes")
 
     # RULE 1: Check for active session waiting for input
     # Priority: most recent session in waiting state
