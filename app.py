@@ -2626,6 +2626,7 @@ def health_check():
 
 print("[Startup] All routes registered successfully")
 print("[Startup] Backend initialization complete - ready for requests")
+# Deployment: 2026-03-20 00:28 - Fixed persist_node import
 
 if __name__ == '__main__':
     # Read port from environment for deployment compatibility
