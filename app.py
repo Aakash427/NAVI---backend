@@ -122,6 +122,18 @@ try:
             if creds and len([k for k, v in creds.items() if v]) > 0:
                 nodes_with_creds += 1
         print(f"[Startup] Nodes with usable credentials: {nodes_with_creds}/{len(saved_nodes)}")
+        
+        # Rebuild portal connections from saved nodes
+        print("[Startup] Rebuilding portal connections...")
+        connections_rebuilt = 0
+        for portal_id in saved_nodes.keys():
+            edge_id = f"edge-navi_agent-{portal_id}"
+            edges_storage[edge_id] = {
+                "source": "navi_agent",
+                "target": portal_id
+            }
+            connections_rebuilt += 1
+        print(f"[Startup] Rebuilt {connections_rebuilt} portal connections")
     else:
         print("[Startup] No saved nodes found")
 except Exception as e:
@@ -130,6 +142,22 @@ except Exception as e:
     saved_nodes = {}
 
 # ===== HELPER FUNCTIONS =====
+
+def rebuild_navi_connections_from_saved_nodes():
+    """
+    Rebuild edges from navi_agent to all saved portal nodes.
+    Used on startup to restore connections after restart.
+    Returns number of connections rebuilt.
+    """
+    connections_rebuilt = 0
+    for portal_id in saved_nodes.keys():
+        edge_id = f"edge-navi_agent-{portal_id}"
+        edges_storage[edge_id] = {
+            "source": "navi_agent",
+            "target": portal_id
+        }
+        connections_rebuilt += 1
+    return connections_rebuilt
 
 def extract_credentials_from_message(user_message, required_fields=None):
     """
