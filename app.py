@@ -2406,18 +2406,22 @@ def nodes_endpoint():
             print(f"[Add Portal] Creating portal: {portal_name}")
             print(f"[Add Portal] URL: {portal_url}")
             print(f"[Add Portal] Type: {node_type}")
-            print(f"[Add Portal] Credentials: {list(credentials.keys())}")
+            print(f"[Manual Portal] Raw credential labels: {list(credentials.keys())}")
             
             # Generate unique portal ID
             portal_id = str(uuid.uuid4())
             
             # Compute portal key
-            from utils import normalize_portal_key
+            from utils import normalize_portal_key, normalize_manual_credentials
             portal_key = normalize_portal_key(portal_name, portal_url)
             
-            # Encrypt credentials
+            # Normalize credentials for execution readiness
+            normalized_creds, original_labels = normalize_manual_credentials(credentials)
+            print(f"[Manual Portal] Normalized credential keys: {list(normalized_creds.keys())}")
+            
+            # Encrypt normalized credentials
             encrypted_creds = {}
-            for key, value in credentials.items():
+            for key, value in normalized_creds.items():
                 if value:
                     try:
                         encrypted_creds[key] = cipher.encrypt(str(value).encode()).decode()
@@ -2431,7 +2435,11 @@ def nodes_endpoint():
                 'portal_name': portal_name,
                 'portal_url': portal_url,
                 'portal_key': portal_key,
-                'credentials': encrypted_creds
+                'credentials': encrypted_creds,
+                'metadata': {
+                    'original_labels': original_labels,
+                    'manually_added': True
+                }
             }
             
             # Persist to database

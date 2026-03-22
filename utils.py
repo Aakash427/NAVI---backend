@@ -200,6 +200,59 @@ def normalize_fields(raw_fields):
     
     return normalized
 
+def normalize_manual_credentials(raw_credentials):
+    """
+    Normalize manually added portal credentials to execution-ready keys.
+    Maps user-friendly labels to TinyFish-compatible field names.
+    
+    Mappings:
+    - "Venue" -> "input_venue"
+    - "User ID" -> "LoginId"
+    - "Username" -> "LoginId"
+    - "Password" -> "password"
+    - Other fields -> lowercase with underscores
+    
+    Returns: (normalized_creds, original_labels_map)
+    """
+    if not isinstance(raw_credentials, dict):
+        return {}, {}
+    
+    # Mapping table for known field labels
+    CREDENTIAL_MAPPINGS = {
+        'venue': 'input_venue',
+        'user id': 'LoginId',
+        'userid': 'LoginId',
+        'username': 'LoginId',
+        'user name': 'LoginId',
+        'login id': 'LoginId',
+        'loginid': 'LoginId',
+        'password': 'password',
+        'pass': 'password',
+        'pwd': 'password',
+    }
+    
+    normalized = {}
+    original_labels = {}
+    
+    for label, value in raw_credentials.items():
+        # Normalize the label for lookup
+        label_normalized = label.lower().strip()
+        
+        # Check if we have a mapping for this label
+        if label_normalized in CREDENTIAL_MAPPINGS:
+            mapped_key = CREDENTIAL_MAPPINGS[label_normalized]
+            normalized[mapped_key] = value
+            original_labels[mapped_key] = label
+        else:
+            # For unknown fields, convert to lowercase with underscores
+            # e.g., "API Key" -> "api_key"
+            safe_key = re.sub(r'[\s-]+', '_', label_normalized)
+            safe_key = re.sub(r'[^a-z0-9_]', '', safe_key)
+            normalized[safe_key] = value
+            original_labels[safe_key] = label
+    
+    return normalized, original_labels
+
 def mask_credentials(creds):
     """
     Mask sensitive credential values for logging
@@ -314,6 +367,25 @@ def build_execution_goal_comprehensive(session):
     # Build credential description
     cred_desc = "\n".join([f"- {k}: {v}" for k, v in decrypted_creds.items()])
     
+    # Check if this is an ABI portal for specific execution hints
+    portal_name = session.get('portal_name', '').lower()
+    is_abi_portal = 'abi' in portal_name or 'abimm.com' in portal_url.lower()
+    
+    abi_specific_hint = ""
+    if is_abi_portal:
+        print("[Execution Hint] ABI-specific execution hint applied")
+        abi_specific_hint = """
+
+ABI PORTAL SPECIFIC INSTRUCTIONS:
+- The login form has THREE fields: Venue (dropdown), User ID (LoginId), and Password
+- Use 'input_venue' credential for the Venue dropdown
+- Use 'LoginId' credential for the User ID field
+- Use 'password' credential for the Password field
+- After successful login, you will be redirected to the main schedule page
+- Navigate to the schedule section to extract schedule entries
+- Return structured schedule data with dates, times, and details
+"""
+    
     goal = f"""Complete this task in ONE FULL RUN from start to finish:
 
 Task: {original_task}
@@ -321,7 +393,7 @@ Task: {original_task}
 Starting URL: {portal_url}
 
 Available credentials:
-{cred_desc}
+{cred_desc}{abi_specific_hint}
 
 Instructions:
 1. Navigate to the portal URL
