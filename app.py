@@ -641,6 +641,14 @@ def run_orchestration_loop(session_id, task):
             }
             persist_node(portal_id, saved_nodes[portal_id])
             log_session_event(session_id, f"Created new node: {portal_id} (key={node_portal_key})")
+            
+            # Auto-connect new portal to navi_agent
+            edge_id = f"edge-navi_agent-{portal_id}"
+            edges_storage[edge_id] = {
+                "source": "navi_agent",
+                "target": portal_id
+            }
+            log_session_event(session_id, f"Auto-connected portal to navi_agent")
         else:
             saved_nodes[existing_portal]["credentials"] = credentials
             # Update portal_key if missing
