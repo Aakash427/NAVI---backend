@@ -376,14 +376,29 @@ def build_execution_goal_comprehensive(session):
         print("[Execution Hint] ABI-specific execution hint applied")
         abi_specific_hint = """
 
-ABI PORTAL SPECIFIC INSTRUCTIONS:
-- The login form has THREE fields: Venue (dropdown), User ID (LoginId), and Password
-- Use 'input_venue' credential for the Venue dropdown
-- Use 'LoginId' credential for the User ID field
-- Use 'password' credential for the Password field
-- After successful login, you will be redirected to the main schedule page
-- Navigate to the schedule section to extract schedule entries
-- Return structured schedule data with dates, times, and details
+ABI PORTAL SPECIFIC INSTRUCTIONS - FOLLOW EXACTLY:
+1. LOGIN PHASE:
+   - The login form has THREE fields: Venue (dropdown), User ID, and Password
+   - CRITICAL: Use EXACTLY these credential keys:
+     * 'input_venue' → Fill the Venue dropdown
+     * 'LoginId' → Fill the User ID field
+     * 'password' → Fill the Password field
+   - Submit the login form
+   - Wait for redirect to schedule page
+
+2. SCHEDULE EXTRACTION PHASE:
+   - After successful login, you will land on the schedule page
+   - STOP IMMEDIATELY when you see the schedule table/list
+   - DO NOT click any menus or navigation links
+   - DO NOT explore other sections
+   - Extract ALL visible schedule entries from the current page
+   - Each entry should include: date, time, location, and any other visible details
+
+3. COMPLETION:
+   - Return structured JSON with status "complete" and schedule data
+   - Format: {{"status": "complete", "data": {{"schedule": [...]}}}}
+   - Maximum steps after login: 3
+   - If schedule is not visible after login, return error immediately
 """
     
     goal = f"""Complete this task in ONE FULL RUN from start to finish:

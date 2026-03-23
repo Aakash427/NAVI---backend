@@ -466,21 +466,38 @@ Original goal context:
         else:
             decrypted_creds[key] = value
     
-    # Execute TinyFish
+    # ABI execution diagnostics
     portal_url = session.get('portal_url')
+    portal_name = session.get('portal_name', '')
+    is_abi = 'abi' in portal_name.lower() or 'abimm.com' in portal_url.lower()
+    if is_abi:
+        print(f"[ABI Execution] Portal: {portal_name}")
+        print(f"[ABI Execution] Normalized credential keys: {list(decrypted_creds.keys())}")
+        print(f"[ABI Execution] Goal length: {len(goal)} chars")
+    
+    # Execute TinyFish
     
     try:
         tinyfish_result = run_tinyfish(portal_url, goal, decrypted_creds, session_id, session, blueprint)
         parsed_result = parse_tinyfish_result(tinyfish_result)
         
         result_status = parsed_result.get('status')
-        print(f"[Execution] TinyFish returned status={result_status}")
+        if is_abi:
+            print(f"[ABI Execution] TinyFish returned status={result_status}")
+            if result_status in ['timeout', 'error']:
+                print(f"[ABI Execution] Timeout/error after no COMPLETE event")
+                print(f"[ABI Execution] Message: {parsed_result.get('message', 'No message')}")
+        else:
+            print(f"[Execution] TinyFish returned status={result_status}")
         
         # Capture streaming_url from TinyFish result
         streaming_url = tinyfish_result.get('streaming_url') or parsed_result.get('streaming_url')
         if streaming_url:
             session['streaming_url'] = streaming_url
-            print(f"[Execution] Captured streaming_url: {streaming_url}")
+            if is_abi:
+                print(f"[ABI Execution] Streaming URL received: {streaming_url}")
+            else:
+                print(f"[Execution] Captured streaming_url: {streaming_url}")
         
         # Handle timeout/error with retry logic
         # Reduce retry if blueprint exists (should succeed or fail fast)
