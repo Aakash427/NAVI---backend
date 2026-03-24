@@ -107,15 +107,19 @@ def route_message(user_message, sessions, saved_nodes, edges_storage=None):
     # Look for portal name or URL mentions
     matched_node_id = None
     
+    print(f"[Router] Checking {len(saved_nodes)} saved nodes for match with message: '{user_message[:50]}...'")
+    
     for node_id, node_data in saved_nodes.items():
         portal_name = node_data.get('portal_name', '').lower()
         portal_url = node_data.get('portal_url', '').lower()
         portal_key = node_data.get('portal_key', '').lower()
         
+        print(f"[Router] Checking node {node_id[:8]}: name={portal_name}, key={portal_key}")
+        
         # Check if message mentions this portal
         if portal_name and portal_name in message_lower:
             matched_node_id = node_id
-            print(f"[Router] Matched saved node {node_id[:8]} by portal_name: {portal_name}")
+            print(f"[Router] ✓ Matched saved node {node_id[:8]} by portal_name: {portal_name}")
             break
         
         if portal_url:
@@ -123,13 +127,16 @@ def route_message(user_message, sessions, saved_nodes, edges_storage=None):
             domain = portal_url.replace('https://', '').replace('http://', '').split('/')[0]
             if domain in message_lower:
                 matched_node_id = node_id
-                print(f"[Router] Matched saved node {node_id[:8]} by domain: {domain}")
+                print(f"[Router] ✓ Matched saved node {node_id[:8]} by domain: {domain}")
                 break
         
         if portal_key and portal_key in message_lower.replace(' ', '_').replace('-', '_').replace('.', '_'):
             matched_node_id = node_id
-            print(f"[Router] Matched saved node {node_id[:8]} by portal_key: {portal_key}")
+            print(f"[Router] ✓ Matched saved node {node_id[:8]} by portal_key: {portal_key}")
             break
+    
+    if not matched_node_id:
+        print(f"[Router] No portal matched for message")
     
     # ===== RULE: If we have stored result → prefer reasoning =====
     if matched_node_id:
@@ -139,6 +146,10 @@ def route_message(user_message, sessions, saved_nodes, edges_storage=None):
         if portal_node:
             metadata = portal_node.get('metadata', {})
             has_portal_cache = 'last_result' in metadata and metadata.get('last_result')
+            print(f"[Router] Portal {matched_node_id[:8]} metadata keys: {list(metadata.keys())}")
+            print(f"[Router] Portal has cached result: {has_portal_cache}")
+            if has_portal_cache:
+                print(f"[Router] Cache updated at: {metadata.get('last_result_updated_at', 'unknown')}")
         
         # Find session associated with this node
         node_session = None
@@ -149,8 +160,11 @@ def route_message(user_message, sessions, saved_nodes, edges_storage=None):
                 session_id = sid
                 break
         
+        has_session_result = node_session and has_stored_result(node_session)
+        print(f"[Router] Session has result: {has_session_result}, Portal has cache: {has_portal_cache}")
+        
         # Check if we have cached result (either in session or portal metadata)
-        has_cached_result = (node_session and has_stored_result(node_session)) or has_portal_cache
+        has_cached_result = has_session_result or has_portal_cache
         
         if has_cached_result:
             # Detect explicit refresh requests
