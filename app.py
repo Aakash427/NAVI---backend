@@ -552,6 +552,9 @@ Original goal context:
         if streaming_url:
             response['streaming_url'] = streaming_url
         
+        # Log final state returned to Gemini
+        print(f"[Execution] Final state returned to Gemini: {response.get('type', 'unknown')}")
+        
         return response
         
     except Exception as e:
@@ -1064,6 +1067,19 @@ NEVER return plain text. ALWAYS return one of these JSON formats."""
                     
                     if event_type == "result":
                         result_text = event.get("data", "") or event.get("result", "")
+                        
+                        # Lifecycle guard: Check if we got structured data extraction
+                        if result_text and isinstance(result_text, (dict, str)):
+                            try:
+                                parsed_check = result_text if isinstance(result_text, dict) else json.loads(result_text)
+                                if parsed_check.get('status') == 'complete' and parsed_check.get('data'):
+                                    print(f"[Execution] Data extraction success -> finalizing session immediately")
+                                    completed = True
+                                    # Break out of event loop - we have what we need
+                                    break
+                            except:
+                                pass
+                    
                     elif event_type in ("COMPLETE", "COMPLETED", "done", "complete", "completed"):
                         result_text = event.get("resultJson", "") or event.get("result", "") or event.get("data", "") or result_text
                         completed = True
@@ -1083,6 +1099,27 @@ NEVER return plain text. ALWAYS return one of these JSON formats."""
         if not completed:
             elapsed = time.time() - start_time
             print(f"[TinyFish] Stream ended without COMPLETE event after {elapsed:.1f}s")
+            print(f"[Execution] Timeout but fallback parse attempted")
+            
+            # Attempt fallback extraction if we have partial result_text
+            if result_text:
+                try:
+                    fallback_parsed = result_text if isinstance(result_text, dict) else json.loads(result_text)
+                    if fallback_parsed.get('status') == 'complete' and fallback_parsed.get('data'):
+                        print(f"[Execution] Fallback extraction succeeded - returning partial data")
+                        fallback_parsed['streaming_url'] = streaming_url
+                        fallback_parsed['partial'] = True
+                        
+                        # Update live status to complete with partial data
+                        if session and session_id:
+                            session['live_status'] = 'complete'
+                            session['live_message'] = 'Execution complete (partial data)'
+                            persist_session(session_id, session)
+                            print(f"[Execution] Final state: SUCCESS_WITH_PARTIAL_DATA")
+                        
+                        return fallback_parsed
+                except Exception as e:
+                    print(f"[Execution] Fallback parse failed: {e}")
             
             # Update live status to timeout
             if session and session_id:
@@ -1091,6 +1128,7 @@ NEVER return plain text. ALWAYS return one of these JSON formats."""
                 persist_session(session_id, session)
                 print(f"[Live Status] session {session_id[:8]} -> timeout")
             
+            print(f"[Execution] Final state: TIMEOUT_WITH_CLEAN_MESSAGE")
             return {
                 "status": "timeout",
                 "message": "TinyFish execution did not complete",
@@ -1122,6 +1160,17 @@ NEVER return plain text. ALWAYS return one of these JSON formats."""
         if streaming_url:
             parsed_result["streaming_url"] = streaming_url
             print(f"[TinyFish] Including streaming_url in result: {streaming_url}")
+        
+        # Determine final state for logging
+        final_status = parsed_result.get('status', 'unknown')
+        if final_status == 'complete' and parsed_result.get('data'):
+            print(f"[Execution] Final state: SUCCESS_WITH_DATA")
+        elif final_status == 'complete':
+            print(f"[Execution] Final state: SUCCESS_WITH_PARTIAL_DATA")
+        elif final_status == 'error':
+            print(f"[Execution] Final state: EXECUTION_ERROR")
+        else:
+            print(f"[Execution] Final state: {final_status.upper()}")
         
         return parsed_result
         
