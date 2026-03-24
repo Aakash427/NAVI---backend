@@ -21,7 +21,7 @@ load_dotenv()
 print("[Startup] Starting Navi backend...")
 print("[Startup] Loading modules...")
 
-from db_helpers import init_db, load_saved_nodes, persist_node, persist_session, reset_all_state
+from db_helpers import init_db, load_saved_nodes, load_saved_sessions, persist_node, persist_session, reset_all_state
 from utils import normalize_fields, mask_credentials, log_session_event, normalize_portal_key, get_portal_aliases, portals_match, build_execution_goal_comprehensive, build_discovery_goal
 from router import route_message
 from extractors import extract_task_intent, extract_session_input
@@ -102,8 +102,11 @@ sessions = {}  # session_id -> {
     #   "last_input_time": float
     # }
 
-# Database path
-DB_PATH = os.path.join(os.path.dirname(__file__), 'navi.db')
+# Database path - use persistent disk on Render, fallback to local for development
+if os.path.exists('/var/data'):
+    DB_PATH = '/var/data/navi.db'
+else:
+    DB_PATH = os.path.join(os.path.dirname(__file__), 'navi.db')
 
 # Initialize database and load saved nodes on startup
 print("[Startup] Initializing database...")
@@ -113,6 +116,12 @@ try:
     print("[Startup] Loading saved nodes...")
     saved_nodes = load_saved_nodes()
     print(f"[Startup] Loaded {len(saved_nodes)} saved nodes")
+    
+    # Load sessions from database to survive restarts
+    print("[Startup] Loading saved sessions...")
+    loaded_sessions = load_saved_sessions()
+    sessions.update(loaded_sessions)
+    print(f"[Startup] Loaded {len(loaded_sessions)} sessions from database")
     
     # Log credential status on startup
     if saved_nodes:

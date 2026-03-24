@@ -8,7 +8,13 @@ import json
 import os
 from datetime import datetime
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'navi.db')
+# Use persistent disk on Render, fallback to local for development
+if os.path.exists('/var/data'):
+    DB_PATH = '/var/data/navi.db'
+    print(f"[DB] Using persistent disk: {DB_PATH}")
+else:
+    DB_PATH = os.path.join(os.path.dirname(__file__), 'navi.db')
+    print(f"[DB] Using local path: {DB_PATH}")
 
 def init_db():
     """Initialize SQLite database with schema and migrate if needed"""
@@ -204,6 +210,27 @@ def persist_session(session_id, session_data):
     
     conn.commit()
     conn.close()
+
+def load_saved_sessions():
+    """Load all sessions from database into memory"""
+    if not os.path.exists(DB_PATH):
+        init_db()
+        return {}
+    
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT id, session_json FROM sessions')
+    rows = cursor.fetchall()
+    
+    sessions = {}
+    for row in rows:
+        session_id, session_json = row
+        sessions[session_id] = json.loads(session_json) if session_json else {}
+    
+    conn.close()
+    print(f"[DB] Loaded {len(sessions)} sessions from database")
+    return sessions
 
 def delete_session(session_id):
     """Delete a session from the database"""
