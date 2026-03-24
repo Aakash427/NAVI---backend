@@ -8,10 +8,15 @@ import json
 import os
 from datetime import datetime
 
-# Use persistent disk on Render, fallback to local for development
-if os.path.exists('/var/data'):
-    DB_PATH = '/var/data/navi.db'
+# Use persistent directory on Render, fallback to local for development
+# Render provides /opt/render/project/.data as a persistent directory
+if os.path.exists('/opt/render/project'):
+    # Running on Render - use persistent .data directory
+    data_dir = '/opt/render/project/.data'
+    os.makedirs(data_dir, exist_ok=True)
+    DB_PATH = os.path.join(data_dir, 'navi.db')
 else:
+    # Local development
     DB_PATH = os.path.join(os.path.dirname(__file__), 'navi.db')
 
 def init_db():
