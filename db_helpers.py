@@ -11,13 +11,12 @@ from datetime import datetime
 # Use persistent disk on Render, fallback to local for development
 if os.path.exists('/var/data'):
     DB_PATH = '/var/data/navi.db'
-    print(f"[DB] Using persistent disk: {DB_PATH}")
 else:
     DB_PATH = os.path.join(os.path.dirname(__file__), 'navi.db')
-    print(f"[DB] Using local path: {DB_PATH}")
 
 def init_db():
     """Initialize SQLite database with schema and migrate if needed"""
+    print(f"[DB] Using database path: {DB_PATH}")
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
