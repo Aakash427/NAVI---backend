@@ -1651,7 +1651,36 @@ def api_chat():
         if route == 'followup_reasoning':
             from result_reasoning import reason_over_previous_result
             
-            session = sessions[session_id]
+            # If no session exists but we have a matched node with cached result, create a temporary session
+            if not session_id and matched_node_id:
+                portal_node = saved_nodes.get(matched_node_id)
+                if portal_node:
+                    metadata = portal_node.get('metadata', {})
+                    if 'last_result' in metadata:
+                        # Create temporary session with cached result for reasoning
+                        temp_session_id = str(uuid.uuid4())
+                        sessions[temp_session_id] = {
+                            "portal_name": portal_node.get('portal_name'),
+                            "portal_url": portal_node.get('portal_url'),
+                            "matched_node_id": matched_node_id,
+                            "last_result": metadata.get('last_result'),
+                            "last_result_type": metadata.get('last_result', {}).get('result_type'),
+                            "last_result_summary": metadata.get('last_result_summary'),
+                            "last_tool_run_at": metadata.get('last_result_updated_at'),
+                            "mode": "complete",
+                            "status": "complete",
+                            "created_at": datetime.now().isoformat(),
+                            "updated_at": datetime.now().isoformat()
+                        }
+                        session_id = temp_session_id
+                        print(f"[Router] Created temporary session from portal cache for reasoning")
+            
+            session = sessions.get(session_id)
+            if not session:
+                return jsonify({
+                    'type': 'text',
+                    'message': 'I don\'t have any cached results to answer that question. Please run the task first.'
+                }), 200
             
             # Use Gemini to reason over stored result
             reasoning_result = reason_over_previous_result(user_message, session, client)

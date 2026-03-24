@@ -127,6 +127,19 @@ def handle_execution_result(session, parsed_result, saved_nodes, persist_node_fu
         persist_session_func(session_id, session)
         print(f"[Memory] Stored result type={normalized_result.get('result_type')} for follow-up questions")
         
+        # STORE RESULT IN PORTAL METADATA for cached follow-up reasoning
+        # This allows follow-up questions to use cached data without rerunning TinyFish
+        if matched_node_id and matched_node_id in saved_nodes:
+            portal_node = saved_nodes[matched_node_id]
+            if "metadata" not in portal_node:
+                portal_node["metadata"] = {}
+            
+            portal_node["metadata"]["last_result"] = normalized_result
+            portal_node["metadata"]["last_result_updated_at"] = datetime.now().isoformat()
+            portal_node["metadata"]["last_result_summary"] = natural_message
+            persist_node_func(matched_node_id, portal_node)
+            print(f"[Portal Cache] Stored result on portal {matched_node_id[:8]} metadata for cached follow-up reasoning")
+        
         # ===== EXECUTION BLUEPRINT MEMORY =====
         # Store navigation intelligence for stable repeat runs
         data = parsed_result.get("data")

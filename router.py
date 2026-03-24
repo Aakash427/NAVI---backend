@@ -133,6 +133,13 @@ def route_message(user_message, sessions, saved_nodes, edges_storage=None):
     
     # ===== RULE: If we have stored result → prefer reasoning =====
     if matched_node_id:
+        # Check if portal has cached result in metadata
+        portal_node = saved_nodes.get(matched_node_id)
+        has_portal_cache = False
+        if portal_node:
+            metadata = portal_node.get('metadata', {})
+            has_portal_cache = 'last_result' in metadata and metadata.get('last_result')
+        
         # Find session associated with this node
         node_session = None
         session_id = None
@@ -142,43 +149,42 @@ def route_message(user_message, sessions, saved_nodes, edges_storage=None):
                 session_id = sid
                 break
         
-        if node_session and has_stored_result(node_session):
-            # 1️⃣ Semantic follow-up ALWAYS wins
-            if looks_like_followup_question(user_message):
-                print("[Router] Semantic follow-up detected → routing to reasoning")
-                return {
-                    "route": "followup_reasoning",
-                    "session_id": session_id,
-                    "matched_node_id": matched_node_id
-                }
+        # Check if we have cached result (either in session or portal metadata)
+        has_cached_result = (node_session and has_stored_result(node_session)) or has_portal_cache
+        
+        if has_cached_result:
+            # Detect explicit refresh requests
+            refresh_keywords = ['refresh', 'update', 'fetch latest', 'run again', 'check again', 
+                              'get new', 'reload', 'rerun', 'latest', 'current', 'now']
+            is_explicit_refresh = any(keyword in message_lower for keyword in refresh_keywords)
             
-            # 2️⃣ Explicit rerun allowed
-            if should_allow_rerun(user_message, node_session):
-                print("[Router] Explicit rerun requested → repeat_run allowed")
+            if is_explicit_refresh:
+                print(f"[Router] Explicit refresh requested -> repeat_run")
                 return {
                     "route": "repeat_run",
                     "session_id": session_id,
                     "matched_node_id": matched_node_id
                 }
             
-            # 3️⃣ Execution cooldown guard
-            if is_execution_too_recent(node_session):
-                print("[Router] Cooldown guard → reasoning instead of rerun")
-                return {
-                    "route": "followup_reasoning",
-                    "session_id": session_id,
-                    "matched_node_id": matched_node_id
-                }
+            # Natural follow-up questions should use cached result
+            # Examples: "When is my next game?", "What is the Ducks game date?", "How many entries?"
+            print(f"[Router] Using cached portal result for follow-up question")
+            if has_portal_cache:
+                print(f"[Router] Portal cache available from {metadata.get('last_result_updated_at', 'unknown')}")
             
-            # 4️⃣ Default fallback → reasoning
-            print("[Router] Stored result exists → default reasoning")
+            # Create or reuse session for reasoning
+            if not session_id:
+                # No existing session - we'll need to create one in the handler
+                # But we can still route to followup_reasoning with the matched node
+                print(f"[Router] No active session, will use portal cache for reasoning")
+            
             return {
                 "route": "followup_reasoning",
                 "session_id": session_id,
                 "matched_node_id": matched_node_id
             }
         
-        # No stored result - allow repeat run
+        # No cached result - allow repeat run
         return {
             "route": "repeat_run",
             "session_id": None,
