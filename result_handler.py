@@ -9,7 +9,7 @@ from utils import normalize_fields
 from result_interpreter import normalize_execution_result, interpret_execution_result, fallback_format_normalized_result
 
 
-def handle_execution_result(session, parsed_result, saved_nodes, persist_node_func, persist_session_func, client=None):
+def handle_execution_result(session, parsed_result, saved_nodes, persist_node_func, persist_session_func, client=None, edges_storage=None):
     """
     Handle TinyFish execution result and update session/node state.
     
@@ -76,6 +76,18 @@ def handle_execution_result(session, parsed_result, saved_nodes, persist_node_fu
             saved_nodes[node_id] = new_node
             persist_node_func(node_id, new_node)
             print(f"[Result Handler] Created new node {node_id[:8]} (key={portal_key})")
+            
+            # Auto-connect new portal to navi_agent
+            if edges_storage is not None:
+                edge_id = f"edge-navi_agent-{node_id}"
+                edges_storage[edge_id] = {
+                    "source": "navi_agent",
+                    "target": node_id
+                }
+                print(f"[Result Handler] Created edge {edge_id} in edges_storage")
+                print(f"[Result Handler] edges_storage now has {len(edges_storage)} edges")
+            else:
+                print(f"[Result Handler] WARNING: edges_storage not provided, edge not created")
             
             # Store node_id for blueprint storage below
             matched_node_id = node_id

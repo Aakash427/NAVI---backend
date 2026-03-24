@@ -540,7 +540,8 @@ Original goal context:
             saved_nodes,
             persist_node,
             persist_session,
-            client
+            client,
+            edges_storage
         )
         
         # Clear retry count on success
