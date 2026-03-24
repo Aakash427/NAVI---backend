@@ -696,6 +696,8 @@ def run_orchestration_loop(session_id, task):
                 "source": "navi_agent",
                 "target": portal_id
             }
+            print(f"[Edge Creation] Created edge {edge_id} in edges_storage")
+            print(f"[Edge Creation] edges_storage now has {len(edges_storage)} edges")
             log_session_event(session_id, f"Auto-connected portal to navi_agent")
         else:
             saved_nodes[existing_portal]["credentials"] = credentials
@@ -2575,6 +2577,7 @@ def nodes_endpoint():
     # GET: Return all nodes and edges
     else:  # request.method == 'GET'
         try:
+            print(f"[Get Nodes] Fetching nodes - saved_nodes: {len(saved_nodes)}, edges_storage: {len(edges_storage)}")
             nodes = []
             edges = []
             
@@ -2599,10 +2602,13 @@ def nodes_endpoint():
                 
                 # Check if node is connected to navi_agent via edges
                 is_connected = False
+                expected_edge_id = f"edge-navi_agent-{portal_id}"
                 for edge_id, edge_data in edges_storage.items():
                     if edge_data.get('source') == 'navi_agent' and edge_data.get('target') == portal_id:
                         is_connected = True
                         break
+                
+                print(f"[Get Nodes] Portal {portal_id[:8]} - expected_edge: {expected_edge_id}, is_connected: {is_connected}, edges_storage keys: {list(edges_storage.keys())}")
                 
                 # Compute node status
                 credentials = node_data.get('credentials', {})
